@@ -11,11 +11,11 @@ public class Main {
 	public static final int maxKind = 32;
 	public static final HashMap<Integer, Integer> price32 = new HashMap<>();
 	static {
-//		price32.put(5, 6620);
-//		price32.put(6, 7130);
-//		price32.put(7, 7540);
-//		price32.put(8, 7940);
-//		price32.put(9, 8350);
+		price32.put(5, 6620);
+		price32.put(6, 7130);
+		price32.put(7, 7540);
+		price32.put(8, 7940);
+		price32.put(9, 8350);
 		price32.put(10, 8760);
 		price32.put(20, 12330);
 		price32.put(30, 16160);
@@ -44,12 +44,13 @@ public class Main {
 	public static final int founderSize = Stream.of(founder).mapToInt(Order::size).sum();
 
 	public static void main(String[] args) {
-		int tasuMax = 30, driftMax = 30, founderMax = 30;
-
+		/*
+		int tasuMax = 25, driftMax = 20, founderMax = 20;
+		
 		ArrayList<Info> rank = new ArrayList<>();
-
+		
 		for (int i = 10; i <= tasuMax; i += 5) {
-			for (int j = 10; j <= driftMax; j += 5) {
+			for (int j = 10; j <= driftMax; j += 10) {
 				for (int k = 10; k <= founderMax; k += 5) {
 					ArrayList<Order> order = new ArrayList<>();
 					for (Order o : tasumachi)
@@ -63,20 +64,121 @@ public class Main {
 				}
 			}
 		}
+		*/
 		System.out.println("\n ~~ answer ~~ \n");
+		ArrayList<Order> order = new ArrayList<>();
+		for (Order o : tasumachi)
+			order.add(new Order(o.kind(), o.lot() * 25, o.product()));
+		for (Order o : drifters)
+			order.add(new Order(o.kind(), o.lot() * 20, o.product()));
+		for (Order o : founder)
+			order.add(new Order(o.kind(), o.lot() * 15, o.product()));
+
+		searchAllByLot(order, new int[] { 50, 30, 20 }, 0).stream()
+				.sorted(Comparator.comparing(e -> ((ArrayList<OrderList>) e).getFirst().remainKind(), Comparator.reverseOrder())
+						.thenComparing(e -> ((ArrayList<OrderList>) e).stream().mapToInt(OrderList::size).sum()))
+				.limit(30).forEach(e -> {
+					new Info(e, 25, 20, 15).printAllocation();
+					System.out.println();
+				});
+		/*
 		for (Info info : rank.stream().sorted(Comparator.comparing(Info::getCostPerformancePerCard)).toList())
 			info.printInfo();
+			*/
+	}
+
+	private static ArrayList<ArrayList<OrderList>> searchAllByLot(ArrayList<Order> order, int[] lotList, int index) {
+		ArrayList<ArrayList<OrderList>> ret = null;
+		int lot = lotList[index];
+
+		if (index == lotList.length - 1) {
+			ret = new ArrayList<>();
+			SearchData tmp = fillOne(new ArrayList<>(order), new OrderList(lot));
+			if (tmp == null)
+				return null;
+			ArrayList<OrderList> tmpRet = new ArrayList<>();
+			tmpRet.add(tmp.allocation());
+			ret.add(tmpRet);
+			return ret;
+		}
+
+		ArrayList<SearchData> allocationList = hyperFill(new ArrayList<>(order), new OrderList(lot));
+		System.out.println(index + ", " + allocationList.size());
+		allocationList.sort(index == 0 ? Comparator.comparing(SearchData::allocateRate, Comparator.reverseOrder()) : Comparator.comparing(SearchData::remainOrder));
+		int allowRate = allocationList.getFirst().remainOrder();
+		for (SearchData data : allocationList.stream().filter(e -> e.remainOrder() == allowRate).limit(50).toList()) {
+			ArrayList<ArrayList<OrderList>> tmpRet = searchAllByLot(data.order(), lotList, index + 1);
+			if (tmpRet != null) {
+				tmpRet.forEach(e -> e.add(new OrderList(data.allocation())));
+				if (ret != null)
+					ret.addAll(tmpRet);
+				else
+					ret = tmpRet;
+			}
+		}
+		return ret;
 	}
 
 	private static int stage = 0;
 
-	private static ArrayList<ArrayList<Order>> search(ArrayList<Order> order, int nowLot, int nowPrice, int minPrice) {
+	private static ArrayList<ArrayList<OrderList>> searchAll(ArrayList<Order> order, int nowLot, int nowPrice,
+			int minPrice) {
+		if (order.isEmpty()) {
+			ArrayList<ArrayList<OrderList>> ret = new ArrayList<>();
+			ret.add(new ArrayList<>());
+			return ret;
+		}
+		if (stage == 4)
+			return null;
+
+		ArrayList<ArrayList<OrderList>> ret = null;
+
+		int minLot = (order.stream().mapToInt(Order::size).sum() - 1) / Main.maxKind + 1;
+		for (int lot : lotList) {
+			if (minLot <= lot) {
+				if (nowPrice + price32.get(lot) > minPrice)
+					return null;
+				break;
+			}
+		}
+
+		stage++;
+		for (int lot : getKeyListByLot(nowLot)) {
+			if (nowPrice + price32.get(lot) > minPrice)
+				continue;
+			//			if (stage == 1)
+			//				System.out.println("now + " + lot + " : " + minPrice);
+			ArrayList<SearchData> allocationList = fill(new ArrayList<>(order), new OrderList(lot));
+			allocationList.sort(Comparator.comparing(SearchData::allocateRate, Comparator.reverseOrder()));
+			double allowRate = allocationList.getFirst().allocateRate() - 0.25;
+			for (SearchData data : allocationList.stream().filter(e -> e.allocateRate() >= allowRate).toList()) {
+				ArrayList<ArrayList<OrderList>> tmpRet = searchAll(data.order(), lot, nowPrice + price32.get(lot),
+						minPrice);
+				if (tmpRet != null) {
+					tmpRet.forEach(e -> e.add(new OrderList(data.allocation())));
+					if (ret != null
+							&& Info.calcPrice(tmpRet.getFirst().stream().map(OrderList::getLot).toList()) == minPrice)
+						ret.addAll(tmpRet);
+					else {
+						ret = tmpRet;
+						minPrice = nowPrice + Info.calcPrice(ret.getFirst().stream().map(OrderList::getLot).toList());
+					}
+				}
+			}
+		}
+		stage--;
+		return ret;
+	}
+
+	private static ArrayList<OrderList> search(ArrayList<Order> order, int nowLot, int nowPrice, int minPrice) {
 		if (order.isEmpty())
 			return new ArrayList<>();
+		if (stage == 6)
+			return null;
 
-		ArrayList<ArrayList<Order>> ret = null;
+		ArrayList<OrderList> ret = null;
 
-		int minLot = order.stream().mapToInt(Order::size).sum() / Main.maxKind;
+		int minLot = (order.stream().mapToInt(Order::size).sum() - 1) / Main.maxKind + 1;
 		for (int lot : lotList) {
 			if (minLot <= lot) {
 				if (nowPrice + price32.get(lot) >= minPrice)
@@ -87,16 +189,19 @@ public class Main {
 
 		stage++;
 		for (int lot : getKeyListByLot(nowLot)) {
-			if (nowPrice + price32.get(lot) > minPrice)
+			if (nowPrice + price32.get(lot) >= minPrice)
 				continue;
-//			if (stage == 1)
-//				System.out.println("now + " + lot + " : " + minPrice);
-			for (SearchData data : fill(new ArrayList<>(order), new ArrayList<>(), lot)) {
-				ArrayList<ArrayList<Order>> tmpRet = search(data.order(), lot, nowPrice + price32.get(lot), minPrice);
+			//			if (stage == 1)
+			//				System.out.println("now + " + lot + " : " + minPrice);
+			ArrayList<SearchData> allocationList = fill(new ArrayList<>(order), new OrderList(lot));
+			allocationList.sort(Comparator.comparing(SearchData::allocateRate, Comparator.reverseOrder()));
+			double allowRate = allocationList.getFirst().allocateRate() - 0.25;
+			for (SearchData data : allocationList.stream().filter(e -> e.allocateRate() >= allowRate).toList()) {
+				ArrayList<OrderList> tmpRet = search(data.order(), lot, nowPrice + price32.get(lot), minPrice);
 				if (tmpRet != null) {
 					ret = tmpRet;
-					ret.add(new ArrayList<Order>(data.allocation()));
-					minPrice = nowPrice + Info.calcPrice(ret.stream().map(e -> e.getFirst().lot()).toList());
+					ret.add(new OrderList(data.allocation()));
+					minPrice = nowPrice + Info.calcPrice(ret.stream().map(OrderList::getLot).toList());
 				}
 			}
 		}
@@ -104,10 +209,65 @@ public class Main {
 		return ret;
 	}
 
-	private static ArrayList<SearchData> fill(ArrayList<Order> order, ArrayList<Order> allocation, int lot) {
+	private static SearchData fillOne(ArrayList<Order> order, OrderList allocation) {
+		int remain = Main.maxKind - allocation.stream().mapToInt(Order::kind).sum();
+		int lot = allocation.getLot();
+
+		if (order.isEmpty())
+			return new SearchData(order, allocation);
+
+		Order o = order.removeFirst();
+
+		if (o.kind() > remain)
+			return null;
+		if (o.lot() > lot)
+			order.add(new Order(o.kind(), o.lot() - lot, o.product()));
+		allocation.addLast(new Order(o.kind(), Math.min(o.lot(), lot), o.product()));
+		return fillOne(order, allocation);
+	}
+
+	private static int stage2 = 0;
+	private static ArrayList<SearchData> hyperFill(ArrayList<Order> order, OrderList allocation) {
 		ArrayList<SearchData> ret = new ArrayList<>();
 		ArrayList<Order> willAddList = new ArrayList<>();
-		int remain = Main.maxKind - allocation.stream().mapToInt(e -> e.kind()).sum();
+		int remain = Main.maxKind - allocation.stream().mapToInt(Order::kind).sum();
+		int lot = allocation.getLot();
+
+		if (order.isEmpty() || remain == 0) {
+			ret.add(new SearchData(order, allocation));
+			return ret;
+		}
+		if (stage2 == 7)
+			return ret;
+		stage2 ++;
+		while (!order.isEmpty()) {
+			Order o = order.removeFirst();
+
+			for (int i = 1; i <= Math.min(o.kind(), remain); i++) {
+				ArrayList<Order> tmpOrder = new ArrayList<>(order);
+				OrderList tmpAllocation = new OrderList(allocation);
+				if (o.lot() > lot)
+					tmpOrder.add(new Order(i, o.lot() - lot, o.product()));
+				tmpAllocation.addLast(new Order(i, Math.min(o.lot(), lot), o.product()));
+				ArrayList<SearchData> tmpRet = hyperFill(tmpOrder, tmpAllocation);
+				if (i < o.kind())
+					willAddList.add(new Order(o.kind() - i, o.lot(), o.product()));
+				tmpRet.forEach(e -> e.order().addAll(0, willAddList));
+				if (i < o.kind())
+					willAddList.removeLast();
+				ret.addAll(tmpRet);
+			}
+			willAddList.add(o);
+		}
+		stage2 --;
+		return ret;
+	}
+
+	private static ArrayList<SearchData> fill(ArrayList<Order> order, OrderList allocation) {
+		ArrayList<SearchData> ret = new ArrayList<>();
+		ArrayList<Order> willAddList = new ArrayList<>();
+		int remain = Main.maxKind - allocation.stream().mapToInt(Order::kind).sum();
+		int lot = allocation.getLot();
 
 		order.sort(Comparator.comparing(Order::lot, Comparator.reverseOrder()).thenComparing(Order::kind));
 		if (order.isEmpty() || remain == 0) {
@@ -135,8 +295,8 @@ public class Main {
 				order.addLast(tmpO);
 				removeCount++;
 			}
-			allocation.addLast(new Order(o.kind(), lot, o.product()));
-			ArrayList<SearchData> tmpRet = fill(new ArrayList<>(order), new ArrayList<>(allocation), lot);
+			allocation.addLast(o.clone());
+			ArrayList<SearchData> tmpRet = fill(new ArrayList<>(order), new OrderList(allocation));
 			if (!isFirst && tmpRet.getFirst().remain() != 0)
 				break;
 			tmpRet.forEach(e -> e.order().addAll(0, willAddList));
@@ -164,9 +324,17 @@ public class Main {
 
 }
 
-record SearchData(ArrayList<Order> order, ArrayList<Order> allocation) {
+record SearchData(ArrayList<Order> order, OrderList allocation) {
+	public int remainOrder() {
+		return order.stream().mapToInt(e -> e.kind()).sum();
+	}
+
 	public int remain() {
 		return Main.maxKind - allocation.stream().mapToInt(e -> e.kind()).sum();
+	}
+
+	public double allocateRate() {
+		return allocation.allocateRate();
 	}
 }
 
@@ -179,28 +347,58 @@ record Order(int kind, int lot, Product product) {
 	public int size() {
 		return kind * lot;
 	}
+
+	@Override
+	public Order clone() {
+		return new Order(kind, lot, product);
+	}
 }
 
-record Info(ArrayList<ArrayList<Order>> separateList, int tasuLot, int driftLot, int founderLot) {
+class OrderList extends ArrayList<Order> {
+	private final int lot;
+
+	public OrderList(int lot) {
+		this.lot = lot;
+	}
+
+	public OrderList(OrderList src) {
+		super(src);
+		this.lot = src.getLot();
+	}
+
+	public int getLot() {
+		return lot;
+	}
+
+	public double allocateRate() {
+		return (double) this.stream().mapToInt(Order::size).sum() / (Main.maxKind * this.getLot());
+	}
+
+	public int remainKind() {
+		return Main.maxKind - this.stream().mapToInt(Order::kind).sum();
+	}
+}
+
+record Info(ArrayList<OrderList> separateList, int tasuLot, int driftLot, int founderLot) {
 	public static int calcPrice(List<Integer> list) {
 		return list.stream().mapToInt(e -> Main.price32.get(e)).sum();
 	}
 
 	public double getCostPerformanceAverage() {
-		return (double) calcPrice(separateList.stream().map(e -> e.getFirst().lot()).toList())
+		return (double) calcPrice(separateList.stream().map(OrderList::getLot).toList())
 				/ (tasuLot + driftLot + founderLot);
 	}
 
 	public double getCostPerformancePerCard() {
-		return (double) calcPrice(separateList.stream().map(e -> e.getFirst().lot()).toList())
+		return (double) calcPrice(separateList.stream().map(OrderList::getLot).toList())
 				/ (tasuLot * Main.tasuSize + driftLot * Main.driftSize + founderLot * Main.founderSize);
 	}
 
 	public void printInfo() {
 		System.out.println(
-				"price: " + calcPrice(separateList.stream().map(e -> e.getFirst().lot()).toList()));
+				"price: " + calcPrice(separateList.stream().map(OrderList::getLot).toList()));
 		System.out.print("lot: ");
-		separateList.forEach(e -> System.out.print(e.getFirst().lot() + ", "));
+		separateList.forEach(e -> System.out.print(e.getLot() + ", "));
 		System.out.println();
 		System.out.println("allocation: ");
 		separateList.forEach(e -> {
@@ -209,6 +407,14 @@ record Info(ArrayList<ArrayList<Order>> separateList, int tasuLot, int driftLot,
 			System.out.println(")");
 		});
 		System.out.println("tasu: " + tasuLot + ", drift: " + driftLot + ", founder: " + founderLot);
+	}
+
+	public void printAllocation() {
+		separateList.forEach(e -> {
+			System.out.print("(");
+			e.forEach(e2 -> System.out.print("" + e2.product() + ": " + e2.kind() + ", "));
+			System.out.println(")");
+		});
 	}
 }
 
